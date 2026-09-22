@@ -1,0 +1,38 @@
+name: Export des balances Pennylane
+
+on:
+  schedule:
+    # Le 5 de chaque mois à 7h UTC.
+    - cron: "0 7 5 * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Exporter les balances de toutes les sociétés
+        env:
+          PENNYLANE_API_KEYS: ${{ secrets.PENNYLANE_API_KEYS }}
+        run: python export_balances.py
+
+      - name: Commit et push du classeur
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add reports
+          git diff --staged --quiet || git commit -m "Export balances automatique $(date +'%Y-%m-%d')"
+          git push
