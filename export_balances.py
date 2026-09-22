@@ -60,7 +60,7 @@ def load_api_keys():
         sys.exit(
             "Erreur : la variable d'environnement PENNYLANE_API_KEYS est absente ou vide.\n"
             "Elle doit contenir une liste JSON de jetons API, ex. :\n"
-            '  [\"cle_societe_1\", \"cle_societe_2\"]'
+            '  ["cle_societe_1", "cle_societe_2"]'
         )
     try:
         keys = json.loads(raw)
@@ -105,7 +105,7 @@ def fetch_company_info(api_key):
 
 
 def fetch_fiscal_years(api_key):
-    return paginated_get(api_key, "fiscal_years", {"sort": "start"})
+    return paginated_get(api_key, "fiscal_years", {"sort": "start", "limit": 100})
 
 
 def fetch_trial_balance(api_key, period_start, period_end):
@@ -229,7 +229,10 @@ def main():
         try:
             all_rows.extend(export_company(api_key, idx))
         except requests.exceptions.RequestException as exc:
-            print(f"[{idx}]   ÉCHEC : {exc}")
+            detail = ""
+            if getattr(exc, "response", None) is not None:
+                detail = f" — réponse API : {exc.response.text[:300]}"
+            print(f"[{idx}]   ÉCHEC : {exc}{detail}")
             failures.append(idx)
 
     if not all_rows:
