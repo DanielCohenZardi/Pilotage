@@ -12,7 +12,7 @@ la liste JSON de tous les jetons API (un par société). Le script :
      de mois disponible ;
   4. récupère la balance comptable (trial_balance) mois par mois ;
   5. écrit toutes les lignes de toutes les sociétés dans un unique classeur
-     Excel : Société | Mois | Compte | Libellé | Solde
+     Excel : Société | Mois | Trimestre | Exercice fiscal | Compte | Libellé | Solde
 
 Ajouter une société = ajouter son jeton dans le secret PENNYLANE_API_KEYS.
 Rien d'autre à modifier (ni secret supplémentaire, ni variable, ni workflow).
@@ -23,6 +23,11 @@ Format attendu de PENNYLANE_API_KEYS (liste JSON de chaînes) :
 Le "Solde" est le mouvement net du mois (Débit − Crédit) tel que renvoyé par
 l'API pour la période period_start/period_end = ce mois-là — pas un solde
 cumulé depuis le début de l'exercice.
+
+Le "Trimestre" suit l'année civile du mois (2024T1 = janvier-mars 2024, etc.),
+indépendamment de l'exercice fiscal. L'"Exercice fiscal" est déduit des dates
+de l'exercice Pennylane qui couvre ce mois (ex. "2024" si calé sur l'année
+civile, "2024-2025" s'il chevauche deux années civiles).
 
 Endpoints Pennylane utilisés, uniquement ceux-ci :
     https://pennylane.readme.io/reference/gettrialbalance
@@ -46,7 +51,7 @@ BASE_URL = "https://app.pennylane.com/api/external/v2"
 TIMEOUT = 30
 
 OUTPUT_DIR = "reports"
-HEADERS = ["Société", "Mois", "Compte", "Libellé", "Solde"]
+HEADERS = ["Société", "Mois", "Trimestre", "Exercice fiscal", "Compte", "Libellé", "Solde"]
 EUR_FMT = '#,##0.00 €;-#,##0.00 €;-'
 
 
@@ -119,6 +124,27 @@ def fetch_trial_balance(api_key, period_start, period_end):
 # Plage de mois disponible, à partir des exercices fiscaux
 # ---------------------------------------------------------------------------
 
+def quarter_label(a_date):
+    """'2024T1' pour janvier-mars 2024, '2024T2' pour avril-juin 2024, etc.
+    (basé sur l'année civile du mois, pas sur l'exercice fiscal.)"""
+    quarter = (a_date.month - 1) // 3 + 1
+    return f"{a_date.year}T{quarter}"
+
+
+def fiscal_year_label(a_date, fiscal_years):
+    """Renvoie le libellé de l'exercice fiscal couvrant a_date, ex. '2024' si
+    l'exercice est calé sur l'année civile, ou '2024-2025' s'il chevauche deux
+    années civiles. Renvoie une chaîne vide si aucun exercice ne correspond."""
+    for fy in fiscal_years:
+        fy_start = datetime.date.fromisoformat(fy["start"])
+        fy_finish = datetime.date.fromisoformat(fy["finish"])
+        if fy_start <= a_date <= fy_finish:
+            if fy_start.year == fy_finish.year:
+                return str(fy_start.year)
+            return f"{fy_start.year}-{fy_finish.year}"
+    return ""
+
+
 def month_range_from_fiscal_years(fiscal_years, today=None):
     """Renvoie (premier_jour, dernier_jour, 'YYYY-MM') pour chaque mois couvert
     par les exercices fiscaux, du plus ancien exercice au mois en cours (sans
@@ -151,8 +177,9 @@ def month_range_from_fiscal_years(fiscal_years, today=None):
 # ---------------------------------------------------------------------------
 
 def export_company(api_key, index):
-    """Renvoie la liste des lignes [Société, Mois, Compte, Libellé, Solde]
-    pour ce jeton API, ou lève une exception en cas d'échec."""
+    """Renvoie la liste des lignes [Société, Mois, Trimestre, Exercice fiscal,
+    Compte, Libellé, Solde] pour ce jeton API, ou lève une exception en cas
+    d'échec."""
     company = fetch_company_info(api_key)
     company_name = company.get("name") or f"Société inconnue #{index}"
     print(f"[{index}] Société : {company_name} (ID {company.get('id')})")
@@ -171,11 +198,15 @@ def export_company(api_key, index):
     rows = []
     for month_start, month_end, label in months:
         accounts = fetch_trial_balance(api_key, month_start.isoformat(), month_end.isoformat())
+        trimestre = quarter_label(month_start)
+        exercice = fiscal_year_label(month_start, fiscal_years)
         for a in accounts:
             solde = float(a.get("debits") or 0) - float(a.get("credits") or 0)
             rows.append([
                 company_name,
                 label,
+                trimestre,
+                exercice,
                 a.get("formatted_number") or a.get("number"),
                 a.get("label"),
                 solde,
@@ -189,7 +220,7 @@ def export_company(api_key, index):
 # ---------------------------------------------------------------------------
 
 def build_workbook(rows):
-    rows.sort(key=lambda r: (r[0], r[1], r[2]))
+    rows.sort(key=lambda r: (r[0], r[1], r[4]))  # Société, Mois, Compte
 
     wb = Workbook()
     ws = wb.active
@@ -204,12 +235,12 @@ def build_workbook(rows):
     last_row = len(rows) + 1
     if last_row > 1:
         for r in range(2, last_row + 1):
-            ws.cell(row=r, column=5).number_format = EUR_FMT
-        table = Table(displayName="BalancesBrutes", ref=f"A1:E{last_row}")
+            ws.cell(row=r, column=7).number_format = EUR_FMT
+        table = Table(displayName="BalancesBrutes", ref=f"A1:G{last_row}")
         table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
         ws.add_table(table)
 
-    for i, w in enumerate([28, 10, 14, 45, 16], start=1):
+    for i, w in enumerate([28, 10, 10, 14, 14, 45, 16], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A2"
     return wb
